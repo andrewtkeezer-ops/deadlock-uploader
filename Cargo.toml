@@ -1,8 +1,8 @@
 [package]
 name = "deadlock-api-ingest"
 version = "0.4.4"
-description = "Deadlock API Ingest"
-repository = "https://github.com/deadlock-api/deadlock-api-ingest"
+description = "Deadlock Squad Uploader (fork of deadlock-api-ingest)"
+repository = "https://github.com/andrewtkeezer-ops/deadlock-uploader"
 license = "MIT"
 edition = "2024"
 

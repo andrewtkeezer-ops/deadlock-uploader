@@ -112,13 +112,13 @@ BEGIN
   BEGIN
     BLOCK "040904b0"
     BEGIN
-      VALUE "CompanyName", "Deadlock API"
-      VALUE "FileDescription", "Deadlock API Ingest"
+      VALUE "CompanyName", "Deadlock Squad"
+      VALUE "FileDescription", "Deadlock Squad Uploader (deadlock-api-ingest fork)"
       VALUE "FileVersion", "{version}"
       VALUE "InternalName", "deadlock-api-ingest"
       VALUE "LegalCopyright", "Copyright (c) 2025 Deadlock API Contributors"
       VALUE "OriginalFilename", "deadlock-api-ingest.exe"
-      VALUE "ProductName", "Deadlock API Ingest"
+      VALUE "ProductName", "Deadlock Squad Uploader"
       VALUE "ProductVersion", "{version}"
     END
   END

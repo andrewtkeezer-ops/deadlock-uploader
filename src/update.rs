@@ -11,7 +11,7 @@ use crate::paths;
 use crate::utils::http_client;
 
 const LATEST_RELEASE: &str =
-    "https://api.github.com/repos/deadlock-api/deadlock-api-ingest/releases/latest";
+    "https://api.github.com/repos/andrewtkeezer-ops/deadlock-uploader/releases/latest";
 const USER_AGENT: &str = "deadlock-api-ingest";
 const MAX_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
 /// The shared client's 30 s limit is for API calls; a ~30 MB download needs longer.

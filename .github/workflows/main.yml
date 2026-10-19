@@ -171,6 +171,8 @@ jobs:
             binary_name: deadlock-api-ingest.exe
             asset_name: deadlock-api-ingest-windows-latest.exe
     runs-on: ${{ matrix.platform }}
+    env:
+      CAN_SIGN: ${{ secrets.AZURE_CLIENT_ID != '' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       is_prerelease: ${{ steps.version.outputs.is_prerelease }}
@@ -228,6 +230,26 @@ jobs:
           # Same exe; the "-setup" name makes it install itself when double-clicked
           copy target\${{ matrix.target }}\release\${{ matrix.binary_name }} deadlock-api-ingest-setup.exe
           Get-Item ${{ matrix.asset_name }}, deadlock-api-ingest-setup.exe
+      # Deadlock Squad fork: code-sign the Windows exes with Azure Trusted Signing when the
+      # secrets exist. Without a signature Windows Smart App Control blocks the download outright.
+      # Secrets: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, plus the endpoint,
+      # account and certificate-profile names from the Trusted Signing resource.
+      - name: Code sign (Windows)
+        if: matrix.platform == 'windows-latest' && env.CAN_SIGN == 'true'
+        uses: azure/trusted-signing-action@v0.5.9
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}
+          files-folder-filter: exe
+          files-folder-depth: 1
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
       - name: Upload build artifact
         uses: actions/upload-artifact@v5
         with:

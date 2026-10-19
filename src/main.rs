@@ -74,6 +74,7 @@ mod install;
 mod paths;
 mod scan_cache;
 mod service;
+mod squad;
 mod steam_user;
 mod update;
 mod utils;

@@ -1,3 +1,31 @@
+# Deadlock Squad Uploader
+
+Fork of [deadlock-api/deadlock-api-ingest](https://github.com/deadlock-api/deadlock-api-ingest) (MIT) for the
+[Deadlock Squad](https://deadlock.andrewtkeezer.workers.dev) friend-group site. Everything below this section is
+the upstream README and still applies.
+
+**What this fork changes** (kept deliberately small so upstream merges stay clean):
+
+- `src/squad.rs` (new): after each match is uploaded to deadlock-api, POSTs the match id to the squad site so the
+  leaderboard refreshes immediately. One call added in `ingestion_cache::mark_ingested`. Disable with `DEADLOCK_SQUAD_URL=`.
+- `src/update.rs`: self-update checks this repo's releases instead of upstream's.
+- `build.rs` / `Cargo.toml`: product name and metadata.
+- `.github/workflows/main.yml`: Windows exes are code-signed with Azure Trusted Signing when the `AZURE_*` secrets
+  are set (needed for Windows Smart App Control). Asset filenames are unchanged from upstream.
+
+**Pulling upstream changes**
+
+```sh
+git fetch upstream
+git merge upstream/master      # resolve conflicts (rare: the files above), then
+git push origin squad
+```
+
+The release workflow runs on every push and publishes a GitHub release tagged with the version in `Cargo.toml`
+(a pre-release build if that version already exists). Bump the version after merging upstream.
+
+---
+
 # Deadlock API Ingest
 
 A lightweight background tool that monitors your Steam HTTP cache for Deadlock game replay files and automatically submits match metadata to the Deadlock API. This helps build a comprehensive database of Deadlock matches for the community.

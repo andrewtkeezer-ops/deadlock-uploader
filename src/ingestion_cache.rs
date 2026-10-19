@@ -116,6 +116,7 @@ fn append_to_log_file(salt: &Salts, source: Source) {
 /// This should only be called after successful ingestion.
 pub(crate) fn mark_ingested(salt: &Salts, source: Source) {
     append_to_log_file(salt, source);
+    crate::squad::notify(salt);
 
     let cache = INGESTION_CACHE.get_or_init(Default::default);
     let mut cache = cache.write().unwrap_or_else(|poisoned| {
