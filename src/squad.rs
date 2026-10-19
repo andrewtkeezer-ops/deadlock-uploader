@@ -1,4 +1,4 @@
-//! Deadlock Squad fork: after a match is uploaded to deadlock-api, tell the squad site so the
+//! Soul Scribe fork: after a match is uploaded to deadlock-api, tell the squad site so the
 //! leaderboard refreshes right away instead of waiting for its hourly sync.
 //!
 //! Fire-and-forget on a background thread; failures are logged at debug level and never

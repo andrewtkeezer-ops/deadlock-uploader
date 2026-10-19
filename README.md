@@ -1,7 +1,7 @@
-# Deadlock Squad Uploader
+# Soul Scribe Uploader
 
 Fork of [deadlock-api/deadlock-api-ingest](https://github.com/deadlock-api/deadlock-api-ingest) (MIT) for the
-[Deadlock Squad](https://deadlock.andrewtkeezer.workers.dev) friend-group site. Everything below this section is
+[Soul Scribe](https://deadlock.andrewtkeezer.workers.dev) friend-group site. Everything below this section is
 the upstream README and still applies.
 
 **What this fork changes** (kept deliberately small so upstream merges stay clean):

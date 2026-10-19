@@ -230,7 +230,7 @@ jobs:
           # Same exe; the "-setup" name makes it install itself when double-clicked
           copy target\${{ matrix.target }}\release\${{ matrix.binary_name }} deadlock-api-ingest-setup.exe
           Get-Item ${{ matrix.asset_name }}, deadlock-api-ingest-setup.exe
-      # Deadlock Squad fork: code-sign the Windows exes with Azure Trusted Signing when the
+      # Soul Scribe fork: code-sign the Windows exes with Azure Trusted Signing when the
       # secrets exist. Without a signature Windows Smart App Control blocks the download outright.
       # Secrets: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, plus the endpoint,
       # account and certificate-profile names from the Trusted Signing resource.
