@@ -45,6 +45,13 @@ use crate::utils::Salts;
 const GC_MIN_INTERVAL: Duration = Duration::from_secs(20);
 // Between background passes. Most passes no-op quickly once the 24h quota is spent.
 const BACKGROUND_PASS_INTERVAL: Duration = Duration::from_mins(30);
+// Squad: after Deadlock exits, wait this long (for Steam to post the last match) and run a pass,
+// instead of waiting for the next 30-minute tick. The game must be closed for GC traffic anyway.
+const AFTER_GAME_DELAY: Duration = Duration::from_secs(45);
+const GAME_POLL: Duration = Duration::from_secs(15);
+// Squad: the global to-fetch list is other people's matches; cap it per pass so the 40/day
+// salt quota always has room for the account's own games and friends' games.
+const TO_FETCH_PER_PASS: usize = 15;
 // An account whose GC handshake failed (e.g. doesn't own the game) fails identically
 // every pass; skip it for a day rather than re-paying the connect/timeout cost.
 const GC_BACKOFF_SECS: i64 = 24 * 60 * 60;
@@ -200,11 +207,7 @@ async fn run_account(
         .await
         .inspect_err(|e| warn!("gc: {e}"))
         .unwrap_or_default();
-    if to_fetch.iter().all(|id| processed.contains(id)) && history_budget(&history_quota, now) == 0
-    {
-        info!("gc: nothing to fetch for account {account}");
-        return Ok(());
-    }
+    // Squad: the account's own history is always worth a look (see own_matches below).
 
     // Any connect failure means this account can't serve requests right now; back it off
     // for a day and let the batch move on. A successful connect clears any prior backoff.
@@ -232,9 +235,11 @@ async fn run_account(
         last_request,
         sys,
     };
-    // Friends' fresh matches go first; whatever quota is left goes to the global list.
-    let mut match_ids = run.friend_matches().await;
-    match_ids.extend(fresh_newest_first(to_fetch, run.processed, usize::MAX));
+    // Squad: the account's own missing matches go first (this is what the squad site needs),
+    // then friends' fresh matches, then a capped slice of the global list.
+    let mut match_ids = run.own_matches(account).await;
+    match_ids.extend(run.friend_matches().await);
+    match_ids.extend(fresh_newest_first(to_fetch, run.processed, TO_FETCH_PER_PASS));
     let fetched = run.fetch_salts(match_ids).await;
 
     info!("gc: account {account} fetched {fetched} match salt(s)");
@@ -345,6 +350,31 @@ impl AccountRun<'_> {
     /// Matches deadlock-api is missing salts for, newest first, from the histories of
     /// friends who most likely played since the API last saw them. Best-effort: any
     /// failure just yields fewer (or no) matches.
+    /// Squad: the account's own newest history page, minus matches deadlock-api already has
+    /// salts for. One GC history request per pass; newest first so a fresh game wins the quota.
+    async fn own_matches(&mut self, account: u32) -> Vec<u64> {
+        throttle(self.last_request, GC_MIN_INTERVAL).await;
+        let history = match self.session.fetch_match_history(account).await {
+            Ok((h, _)) => h,
+            Err(e) => {
+                warn!("gc: own match history for {account} failed: {e}");
+                return Vec::new();
+            }
+        };
+        let known = {
+            let ids = history.clone();
+            blocking(move || api::known_match_ids(&ids))
+                .await
+                .inspect_err(|e| warn!("gc: {e}"))
+                .unwrap_or_default()
+        };
+        let missing: Vec<u64> = history.into_iter().filter(|id| !known.contains(id)).collect();
+        if !missing.is_empty() {
+            info!("gc: account {account} has {} own match(es) without salts", missing.len());
+        }
+        fresh_newest_first(missing, self.processed, usize::MAX)
+    }
+
     async fn friend_matches(&mut self) -> Vec<u64> {
         let now = now_secs();
         let budget = history_budget(&self.history_quota, now).min(self.quota.remaining(now));
@@ -668,9 +698,23 @@ pub(crate) fn spawn_background() {
         .name("gc-sync".into())
         .spawn(|| {
             log_auth_status();
+            // Squad: besides the 30-minute cadence, run a pass shortly after the game closes,
+            // which is exactly when a new match is waiting to be recovered.
+            let mut sys = sysinfo::System::new();
+            let mut was_running = game_running(&mut sys);
+            let mut next_pass = std::time::Instant::now();
             loop {
-                run_pass_blocking();
-                std::thread::sleep(BACKGROUND_PASS_INTERVAL);
+                let running = game_running(&mut sys);
+                if was_running && !running {
+                    info!("gc: Deadlock closed, running a pass in {}s", AFTER_GAME_DELAY.as_secs());
+                    next_pass = std::time::Instant::now() + AFTER_GAME_DELAY;
+                }
+                was_running = running;
+                if std::time::Instant::now() >= next_pass {
+                    run_pass_blocking();
+                    next_pass = std::time::Instant::now() + BACKGROUND_PASS_INTERVAL;
+                }
+                std::thread::sleep(GAME_POLL);
             }
         });
     if let Err(e) = spawned {

@@ -63,7 +63,9 @@ use crate::utils::{Salts, now_secs};
 use crate::{game_process, paths, steam_user};
 use scan::KnownMatch;
 
-const PASS_EVERY: Duration = Duration::from_mins(5);
+// Squad: 3 min instead of 5 — more chances to pair a salt reply with its match id before the
+// post-game screen is gone.
+const PASS_EVERY: Duration = Duration::from_mins(3);
 /// A slow pass waits this many times its own length before the next one, so the game is
 /// read at most a fifth of the time.
 const PASS_REST_RATIO: u32 = 4;
