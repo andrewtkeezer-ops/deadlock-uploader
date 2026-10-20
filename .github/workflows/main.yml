@@ -368,7 +368,8 @@ jobs:
     name: Create Release
     needs: [ build, windows-smoke ]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    # Soul Scribe fork: releases come from the `squad` branch (master mirrors upstream).
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/squad')
     steps:
       - uses: actions/checkout@v5
       - name: Download all artifacts
@@ -379,6 +380,8 @@ jobs:
         run: |
           mkdir -p ./release-assets
           find ./artifacts -name "deadlock-api-ingest-*" -type f -exec cp {} ./release-assets/ \;
+          # Soul Scribe fork: the installer under the name the Setup page links to
+          cp ./release-assets/deadlock-api-ingest-setup.exe ./release-assets/soul-scribe-setup.exe
           ls -la ./release-assets/
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -387,12 +390,12 @@ jobs:
         with:
           tag_name: ${{ needs.build.outputs.version }}
           name: |
-            ${{ needs.build.outputs.is_prerelease == 'true' && 'Nightly - ' || '' }}Deadlock API Ingest ${{ needs.build.outputs.version }}
+            ${{ needs.build.outputs.is_prerelease == 'true' && 'Nightly - ' || '' }}Soul Scribe uploader ${{ needs.build.outputs.version }}
           body: |
             ## Installation
 
             **Windows (recommended):**
-            Download and run [deadlock-api-ingest-setup.exe](https://github.com/deadlock-api/deadlock-api-ingest/releases/download/${{ needs.build.outputs.version }}/deadlock-api-ingest-setup.exe). No admin rights needed.
+            Download and run [soul-scribe-setup.exe](https://github.com/${{ github.repository }}/releases/download/${{ needs.build.outputs.version }}/soul-scribe-setup.exe). No admin rights needed. Windows may warn (unsigned): More info → Run anyway.
 
             **Windows (PowerShell - Run as Administrator):**
             Open a Powershell window as an administrator and run the following command:
