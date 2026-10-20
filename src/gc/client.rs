@@ -20,6 +20,7 @@ use tracing::{debug, warn};
 use valveprotos::deadlock::{
     CMsgClientToGcGetMatchHistory, CMsgClientToGcGetMatchHistoryResponse,
     CMsgClientToGcGetMatchMetaData, CMsgClientToGcGetMatchMetaDataResponse,
+    CMsgClientToGcUpdateHeroBuild, CMsgClientToGcUpdateHeroBuildResponse, CMsgHeroBuild,
     EgcCitadelClientMessages, c_msg_client_to_gc_get_match_history_response,
     c_msg_client_to_gc_get_match_meta_data_response::EResult,
 };
@@ -229,6 +230,28 @@ impl GcSession {
             self.gc.job_untyped(UntypedMessage(req_bytes), kind, true),
         )
         .await
+    }
+
+    /// Squad: publish (or update) a hero build in this account's in-game build list.
+    /// Returns the build id and version the GC assigned.
+    pub(crate) async fn publish_build(&self, build: CMsgHeroBuild) -> Result<(u32, u32), GcError> {
+        let req = CMsgClientToGcUpdateHeroBuild {
+            hero_build: Some(build),
+        };
+        let kind = MsgKind(EgcCitadelClientMessages::KEMsgClientToGcUpdateHeroBuild as i32);
+        let raw = self
+            .send_job(req.encode_to_vec(), kind, "publish build")
+            .await?;
+        let resp = CMsgClientToGcUpdateHeroBuildResponse::decode(raw.data.as_ref())
+            .map_err(|e| GcError::GcUnavailable(format!("bad build response: {e}")))?;
+        if resp.response == Some(1) {
+            Ok((resp.hero_build_id.unwrap_or(0), resp.version.unwrap_or(1)))
+        } else {
+            Err(GcError::GcUnavailable(format!(
+                "build publish result {:?}",
+                resp.response
+            )))
+        }
     }
 
     /// One `GetMatchMetaData` round-trip, tagged with this session's account. No internal

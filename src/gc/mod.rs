@@ -39,6 +39,7 @@ use store::{GcStore, MAX_SALT_ATTEMPTS, now_secs};
 
 use crate::ingestion_cache::Source;
 use crate::utils::Salts;
+use valveprotos::deadlock::CMsgHeroBuild;
 
 // GetMatchMetaData is rate-limited per-account by Steam's GC. A faster cadence trips
 // that limit sooner; when it does, the account's run stops (see `GcRateLimited`).
@@ -239,10 +240,15 @@ async fn run_account(
     // then friends' fresh matches, then a capped slice of the global list.
     let mut match_ids = run.own_matches(account).await;
     match_ids.extend(run.friend_matches().await);
-    match_ids.extend(fresh_newest_first(to_fetch, run.processed, TO_FETCH_PER_PASS));
+    match_ids.extend(fresh_newest_first(
+        to_fetch,
+        run.processed,
+        TO_FETCH_PER_PASS,
+    ));
     let fetched = run.fetch_salts(match_ids).await;
 
     info!("gc: account {account} fetched {fetched} match salt(s)");
+    run.sync_builds(account).await;
     Ok(())
 }
 
@@ -350,6 +356,77 @@ impl AccountRun<'_> {
     /// Matches deadlock-api is missing salts for, newest first, from the histories of
     /// friends who most likely played since the API last saw them. Best-effort: any
     /// failure just yields fewer (or no) matches.
+    /// Squad: publish builds the author flagged on the site into their in-game build list.
+    async fn sync_builds(&mut self, account: u32) {
+        use valveprotos::deadlock::c_msg_hero_build::{BuildModCategory, BuildModEntry, DetailsV0};
+        let pending = blocking(move || Ok::<_, GcError>(crate::squad::pending_builds(account)))
+            .await
+            .unwrap_or_default();
+        if pending.is_empty() {
+            return;
+        }
+        info!(
+            "gc: account {account} has {} build(s) to publish",
+            pending.len()
+        );
+        for b in pending {
+            throttle(self.last_request, GC_MIN_INTERVAL).await;
+            let now = u32::try_from(now_secs()).unwrap_or(0);
+            let build = CMsgHeroBuild {
+                hero_build_id: b.hero_build_id.filter(|id| *id > 0),
+                hero_id: Some(b.hero_id),
+                author_account_id: Some(account),
+                last_updated_timestamp: Some(now),
+                name: Some(b.name.clone()),
+                description: Some(b.description.clone()),
+                language: Some(0),
+                version: b.version.map(|v| v + 1),
+                details: Some(DetailsV0 {
+                    mod_categories: b
+                        .categories
+                        .iter()
+                        .map(|c| BuildModCategory {
+                            name: Some(c.name.clone()),
+                            description: Some(c.description.clone()),
+                            mods: c
+                                .mods
+                                .iter()
+                                .map(|m| BuildModEntry {
+                                    ability_id: Some(m.ability_id),
+                                    annotation: Some(m.annotation.clone())
+                                        .filter(|a| !a.is_empty()),
+                                    imbue_target_ability_id: Some(m.imbue_target_ability_id)
+                                        .filter(|i| *i > 0),
+                                    ..Default::default()
+                                })
+                                .collect(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                    ability_order: None,
+                }),
+                ..Default::default()
+            };
+            let outcome = self.session.publish_build(build).await;
+            match &outcome {
+                Ok((id, v)) => info!("gc: published build {} as in-game build {id} v{v}", b.id),
+                Err(e) => warn!("gc: publishing build {} failed: {e}", b.id),
+            }
+            let msg = outcome.as_ref().err().map(ToString::to_string);
+            let res = outcome.ok();
+            let bid = b.id;
+            let _ = blocking(move || {
+                crate::squad::report_build(
+                    account,
+                    bid,
+                    res.ok_or_else(|| msg.as_deref().unwrap_or("unknown error")),
+                );
+                Ok::<_, GcError>(())
+            })
+            .await;
+        }
+    }
+
     /// Squad: the account's own newest history page, minus matches deadlock-api already has
     /// salts for. One GC history request per pass; newest first so a fresh game wins the quota.
     async fn own_matches(&mut self, account: u32) -> Vec<u64> {
@@ -368,9 +445,15 @@ impl AccountRun<'_> {
                 .inspect_err(|e| warn!("gc: {e}"))
                 .unwrap_or_default()
         };
-        let missing: Vec<u64> = history.into_iter().filter(|id| !known.contains(id)).collect();
+        let missing: Vec<u64> = history
+            .into_iter()
+            .filter(|id| !known.contains(id))
+            .collect();
         if !missing.is_empty() {
-            info!("gc: account {account} has {} own match(es) without salts", missing.len());
+            info!(
+                "gc: account {account} has {} own match(es) without salts",
+                missing.len()
+            );
         }
         fresh_newest_first(missing, self.processed, usize::MAX)
     }
@@ -706,7 +789,10 @@ pub(crate) fn spawn_background() {
             loop {
                 let running = game_running(&mut sys);
                 if was_running && !running {
-                    info!("gc: Deadlock closed, running a pass in {}s", AFTER_GAME_DELAY.as_secs());
+                    info!(
+                        "gc: Deadlock closed, running a pass in {}s",
+                        AFTER_GAME_DELAY.as_secs()
+                    );
                     next_pass = std::time::Instant::now() + AFTER_GAME_DELAY;
                 }
                 was_running = running;
