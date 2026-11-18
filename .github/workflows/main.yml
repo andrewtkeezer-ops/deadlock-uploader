@@ -99,14 +99,22 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "build-cache-${{ runner.os }}-${{ runner.arch }}-stable"
-      - name: Update Rust toolchain to stable
+      # Soul Scribe fork: lint with a fixed toolchain instead of "whatever stable is today".
+      # Every new Rust release adds clippy lints, and with -D warnings that turned an untouched
+      # tree red (and blocked the release) the week Rust 1.100 came out. Bump this on purpose.
+      - name: Install the lint toolchain
         run: |
-          rustup override set stable
-          rustup update stable
-          rustup target add ${{ matrix.target }}
-          rustup component add clippy
+          rustup toolchain install 1.99 --profile minimal --component clippy --target ${{ matrix.target }}
+          rustup override set 1.99
       - name: Cargo Clippy (Deny Warnings)
-        run: cargo clippy --all-targets --locked -- -D warnings
+        shell: bash
+        run: |
+          set -o pipefail
+          # Each clippy error also becomes an annotation, so a failed run can be read without the log.
+          cargo clippy --all-targets --locked --message-format=short -- -D warnings 2>&1 | tee clippy.txt || {
+            grep -E '^[A-Za-z0-9_./\\-]+\.rs:[0-9]+:[0-9]+: (error|warning)' clippy.txt | head -10 | while IFS= read -r line; do echo "::error::${line}"; done
+            exit 1
+          }
 
   test:
     name: Test
