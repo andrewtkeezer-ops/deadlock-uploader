@@ -36,11 +36,13 @@ The application scans Steam's local HTTP cache directory (`Steam/appcache/httpca
 
 While Deadlock runs, it also reads match salts from the game's memory, read-only: the replies the game gets when it loads a match, and replay addresses it keeps. That covers matches whose files Steam hasn't downloaded. It never writes to or injects anything into the game. Pass `--no-memory` to turn this off.
 
+While Deadlock is closed, every 30 minutes, it also asks Steam's Game Coordinator for match salts deadlock-api doesn't have yet. It logs in with the saved session of every Steam account on the PC that has "remember me" on (the refresh token in Steam's `local.vdf`), checks which of that account's Steam friends play Deadlock, and fetches their new matches first, then matches from deadlock-api's list of missing ones. Each account makes at most 40 metadata requests and 20 friend match-history requests a day. The salts go to deadlock-api like the cache ones, credited to the account that fetched them. Pass `--no-gc` to turn this off; the launch option below never runs it.
+
 **Key Features:**
-- 🔒 **Privacy-focused**: Only reads match ids and salts, from Steam's cache and the game's memory
+- 🔒 **Privacy-focused**: Sends only match ids and salts, your Steam account ID and, for the Steam requests, your friends' account IDs
 - ⚡ **Lightweight**: Minimal CPU and memory usage
 - 🔄 **Automatic**: Continuously monitors for new matches as you play
-- 📦 **Runs without admin**: Application runs with standard user permissions (admin only needed for auto-start setup on Windows)
+- 📦 **Runs without admin**: Application runs with standard user permissions (auto-start included)
 
 ## Resources
 
@@ -72,7 +74,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/deadlock-api/deadlock-
 .\install-windows.ps1
 ```
 
-> **⚠️ Auto-Start Permissions**: If you want the application to start automatically on system boot, you'll need to run PowerShell as Administrator. However, **the application itself runs without admin privileges** - you only need admin rights to create the scheduled task for auto-start. If you run the installer without admin rights, you can still install and run the application manually.
+> **Auto-Start**: run as Administrator, the installer starts the application from a scheduled task; without admin rights it adds a startup entry for your user instead, like `deadlock-api-ingest-setup.exe`. **The application itself always runs without admin privileges.**
 >
 > The scheduled task runs while you are logged in. It needs your interactive logon to decrypt the saved Steam session (Windows DPAPI) for match-salt recovery via the Steam Game Coordinator.
 
@@ -82,6 +84,12 @@ Run this command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/deadlock-api/deadlock-api-ingest/master/install-linux.sh | bash
+```
+
+Without curl (Ubuntu's desktop install has wget instead):
+
+```bash
+wget -O- https://raw.githubusercontent.com/deadlock-api/deadlock-api-ingest/master/install-linux.sh | bash
 ```
 
 Or download and run manually:
@@ -95,18 +103,20 @@ chmod +x install-linux.sh
 > **Note**: The installation scripts automatically download the latest release binaries from GitHub and set up the application to run on user login. The application installs to your user directory and does not require elevated privileges.
 >
 > **Reading the game's memory**: most distributions only let a program read another's memory if it started it, and Steam starts Deadlock. The installer therefore offers a small helper, `/usr/local/libexec/deadlock-api-ingest/deadlock-api-ingest-memgrant`, which asks for your password once. It is the only part holding that right (`cap_sys_ptrace`), opens nothing but Deadlock's memory, read-only and for your user, and hands it to the application. Without it, starting the game through the [launch option](#steam-launch-option-alternative-to-background-service) works too.
+>
+> **Packaging**: a distribution package can ship the helper as `/usr/libexec/deadlock-api-ingest/deadlock-api-ingest-memgrant` or `/usr/lib/deadlock-api-ingest/deadlock-api-ingest-memgrant`, root-owned with `cap_sys_ptrace=ep`; the application looks there too.
 
 ### Docker
 
 Run the pre-built Docker image:
 
 ```bash
-docker run -d --restart unless-stopped \
-  -v ~/.steam/steam/appcache/httpcache:/root/.steam/steam/appcache/httpcache \
+docker run -d --restart unless-stopped --name deadlock-api-ingest \
+  -v ~/.steam/steam:/root/.steam/steam:ro \
   ghcr.io/deadlock-api/deadlock-api-ingest:latest
 ```
 
-> **Note**: The command above mounts the default Steam cache directory on Linux (`~/.steam/steam`). If your Steam installation is in a different location, please adjust the path accordingly. The container cannot see the game's process, so it only reads Steam's cache, not the game's memory.
+> **Note**: The command mounts the whole Steam directory, read-only: the tool only recognizes it with its `steamapps` folder, and reads your account ID from `config/loginusers.vdf` to credit your uploads. `~/.steam/steam` is Steam's default on Linux; use `~/.var/app/com.valvesoftware.Steam/.local/share/Steam` for the Flatpak and `~/Library/Application Support/Steam` on macOS. The container cannot see the game's process, so it only reads Steam's cache, not the game's memory. With the whole Steam directory mounted it also runs the Steam requests described in [How It Works](#how-it-works) when it finds a saved session there; add `--no-gc` after the image name to turn them off.
 
 ### NixOS
 
@@ -207,14 +217,20 @@ If the background tool isn't running, the window sets it up and starts it: a sys
 
 Instead of running the ingest service as a persistent background process, you can configure it to run only while Deadlock is active by using Steam's launch options. The service will start when you launch the game and automatically stop when the game exits.
 
-1. Download the binary to a known location (e.g., `~/.local/bin/deadlock-api-ingest` on Linux or `%LOCALAPPDATA%\deadlock-api-ingest\deadlock-api-ingest.exe` on Windows)
+1. Download the binary to a known location (the Linux installer puts it in `~/.local/share/deadlock-api-ingest/deadlock-api-ingest`; on Windows use `%LOCALAPPDATA%\deadlock-api-ingest\deadlock-api-ingest.exe`)
 2. In Steam, right-click **Deadlock** → **Properties** → **General** → **Launch Options**
-3. Set the launch option:
+3. Set the launch option, with the full path: Steam doesn't look in `~/.local/bin`.
 
 **Linux:**
 ```
-/home/YOUR_USER/.local/bin/deadlock-api-ingest -- %command%
+/home/YOUR_USER/.local/share/deadlock-api-ingest/deadlock-api-ingest -- %command%
 ```
+
+**Linux, Flatpak Steam:** Steam runs launch options in its sandbox, which can't see your home directory, so the game won't start until you share the binary's folder with it (read-only):
+```
+flatpak override --user --filesystem=~/.local/share/deadlock-api-ingest:ro com.valvesoftware.Steam
+```
+Then use the launch option above. Share the folder rather than `~/.local/bin`: the installer's `~/.local/bin/deadlock-api-ingest` is only a link to it, and updates replace the binary there. The background service also works with Flatpak Steam and needs none of this.
 
 **Windows:**
 ```
@@ -273,7 +289,7 @@ If you prefer to install manually, you can download the appropriate binary from 
 ### Windows Manual Setup
 1. Download `deadlock-api-ingest-windows-latest.exe`
 2. Place it in `%LOCALAPPDATA%\deadlock-api-ingest\`
-3. Create a scheduled task that runs on user login, only while the user is logged on (no admin required)
+3. Add it to your startup entries (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`), as the installer does without admin rights
 
 ### Linux Manual Setup
 1. Download `deadlock-api-ingest-ubuntu-latest`
@@ -285,6 +301,7 @@ If you prefer to install manually, you can download the appropriate binary from 
 
 - Only reads Steam's local cache files and, while Deadlock runs, the game's memory (read-only, `--no-memory` turns it off)
 - **Minimal Data**: Looks only for match IDs and salts. It sends those and your Steam account ID (to credit your uploads) to the Deadlock API, and keeps a local log of what it submitted (`fetched-salts.jsonl`)
+- **Steam sessions**: The Steam requests use the saved sessions of the Steam accounts on the PC. The sessions go only to Steam, never to deadlock-api. To find friends' new matches, the tool sends your Steam friends' account IDs to deadlock-api. `--no-gc` turns all of this off
 - **Read-Only Access**: Never modifies files and never writes to or injects anything into the game
 - **Open Source**: Full source code is available for review and audit
 

@@ -19,8 +19,14 @@ use rustix::net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, recvmsg}
 
 use super::{MAX_REGION, Region};
 
-/// Where `install-linux.sh` puts the helper, root-owned.
-const HELPER: &str = "/usr/local/libexec/deadlock-api-ingest/deadlock-api-ingest-memgrant";
+/// Where the root-owned helper may be: put there by `install-linux.sh`, or by a distribution
+/// package, which keeps such helpers out of `/usr/local` (e.g. `/usr/libexec` on Fedora,
+/// `/usr/lib/<package>` on Arch).
+const HELPERS: [&str; 3] = [
+    "/usr/local/libexec/deadlock-api-ingest/deadlock-api-ingest-memgrant",
+    "/usr/libexec/deadlock-api-ingest/deadlock-api-ingest-memgrant",
+    "/usr/lib/deadlock-api-ingest/deadlock-api-ingest-memgrant",
+];
 const HELPER_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(super) struct GameProcess {
@@ -31,11 +37,17 @@ pub(super) struct GameProcess {
 impl GameProcess {
     pub(super) fn open(pid: u32) -> io::Result<Self> {
         let mem = match File::open(format!("/proc/{pid}/mem")) {
-            Err(e) if e.kind() == ErrorKind::PermissionDenied && Path::new(HELPER).exists() => {
-                open_through_helper(pid).map_err(|helper| {
+            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+                let Some(helper) = HELPERS.into_iter().find(|path| Path::new(path).exists()) else {
+                    return Err(e);
+                };
+                open_through_helper(helper, pid).map_err(|err| {
+                    let why = helper_blocked()
+                        .map(|why| format!(" ({why})"))
+                        .unwrap_or_default();
                     io::Error::new(
                         ErrorKind::PermissionDenied,
-                        format!("{e}; {HELPER}: {helper}"),
+                        format!("{e}; {helper}: {err}{why}"),
                     )
                 })?
             }
@@ -57,11 +69,39 @@ impl GameProcess {
     }
 }
 
+/// Why the helper's file capability can't take effect when we run it, if it can't.
+fn helper_blocked() -> Option<&'static str> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    let uid_map = fs::read_to_string("/proc/self/uid_map").ok()?;
+    blocked_by(&status, &uid_map)
+}
+
+fn blocked_by(status: &str, uid_map: &str) -> Option<&'static str> {
+    let no_new_privs = status
+        .lines()
+        .filter_map(|line| line.strip_prefix("NoNewPrivs:"))
+        .any(|value| value.trim() == "1");
+    if no_new_privs {
+        return Some(
+            "it gets no capability as this process runs with no_new_privs, e.g. from a systemd \
+             unit's NoNewPrivileges=",
+        );
+    }
+    // Outside the initial user namespace the capability only counts in ours, not the game's.
+    if uid_map.split_whitespace().ne(["0", "0", "4294967295"]) {
+        return Some(
+            "its capability doesn't count as this process runs in its own user namespace, e.g. \
+             from a systemd user unit's PrivateTmp=",
+        );
+    }
+    None
+}
+
 /// Runs the helper with one end of a socket pair as its stdout and takes the open memory file
 /// it sends back.
-fn open_through_helper(pid: u32) -> io::Result<File> {
+fn open_through_helper(path: &str, pid: u32) -> io::Result<File> {
     let (ours, theirs) = UnixStream::pair()?;
-    let mut helper = Command::new(HELPER)
+    let mut helper = Command::new(path)
         .arg(pid.to_string())
         .stdin(Stdio::null())
         .stdout(OwnedFd::from(theirs))
@@ -136,6 +176,19 @@ fn heap_regions(maps: &str) -> Vec<Region> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_helper_is_blocked_under_no_new_privs_or_in_a_user_namespace() {
+        let host = "         0          0 4294967295\n";
+        assert_eq!(blocked_by("NoNewPrivs:\t0\n", host), None);
+        assert!(
+            blocked_by("NoNewPrivs:\t1\n", host).is_some_and(|why| why.contains("no_new_privs"))
+        );
+        let own_ns = "      1000       1000          1\n";
+        assert!(
+            blocked_by("NoNewPrivs:\t0\n", own_ns).is_some_and(|why| why.contains("namespace"))
+        );
+    }
 
     #[test]
     fn only_readable_private_anonymous_mappings_are_heap() {

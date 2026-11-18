@@ -53,7 +53,6 @@ use std::io::{self, ErrorKind};
 use std::thread::sleep;
 use std::time::Instant;
 
-use sysinfo::System;
 use tracing::{debug, info, warn};
 use valveprotos::deadlock::CMsgClientToGcGetMatchMetaDataResponse;
 
@@ -146,7 +145,7 @@ pub(crate) fn run_pass_blocking() {
 }
 
 fn find_game() -> Option<u32> {
-    game_process::find_pid(&mut System::new())
+    game_process::find_pid(&mut game_process::new_system())
 }
 
 /// Whether this process may read the game. Only one per user does, as the watcher and a
@@ -173,8 +172,8 @@ fn log_open_error(e: &io::Error, warned: &mut bool) {
         debug!("memory: cannot open Deadlock: {e}");
     } else if !core::mem::replace(warned, true) {
         let hint = if cfg!(target_os = "linux") {
-            "; run the installer again to set up the memory helper, or start the game through \
-             the launch wrapper (`deadlock-api-ingest -- %command%`)"
+            "; run the installer again or see the README to set up the memory helper, or start \
+             the game through the launch wrapper (`deadlock-api-ingest -- %command%`)"
         } else {
             ""
         };
