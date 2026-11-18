@@ -73,7 +73,8 @@ $desktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Deadlock API
 # --- The exe carries its icon and version info (build.rs) ----------------------------------------
 $info = (Get-Item $Exe).VersionInfo
 Write-Host "version info: $($info.ProductName) $($info.ProductVersion) by $($info.CompanyName)"
-Test-Check 'version info embedded' { $info.ProductName -eq 'Deadlock API Ingest' -and $info.CompanyName -eq 'Deadlock API' }
+# Soul Scribe fork: build.rs brands the exe as the Soul Scribe uploader.
+Test-Check 'version info embedded' { $info.ProductName -eq 'Soul Scribe Uploader' -and $info.CompanyName -eq 'Soul Scribe' }
 Add-Type -Namespace Win32 -Name Shell -MemberDefinition @'
 [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
 public static extern uint ExtractIconEx(string file, int index, IntPtr[] large, IntPtr[] small, uint count);
