@@ -50,6 +50,11 @@ struct Args {
     #[arg(long, conflicts_with_all = ["once", "no_gc", "own_matches", "uninstall", "command"])]
     install: bool,
 
+    /// With --install: replace the installed copy and restart the background service without
+    /// opening the window or showing dialogs (used by automatic updates)
+    #[arg(long, requires = "install")]
+    silent: bool,
+
     /// Remove what --install set up (Windows); keeps logs and fetched-salts.jsonl
     #[arg(long, conflicts_with_all = ["once", "no_gc", "own_matches", "command"])]
     uninstall: bool,
@@ -181,7 +186,7 @@ fn main() {
         let exit_code = if args.gui {
             gui::run()
         } else if setup {
-            install::run_install()
+            install::run_install(args.silent)
         } else {
             install::run_uninstall()
         };
@@ -248,6 +253,8 @@ fn main() {
     if !args.no_gc {
         gc::spawn_background();
     }
+    // Squad: the background service keeps itself up to date (see `update::spawn_background`).
+    update::spawn_background();
 
     watch_cache_dirs(cache_dirs);
 }

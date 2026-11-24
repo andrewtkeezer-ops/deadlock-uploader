@@ -1,4 +1,6 @@
-//! Self-update from the GitHub releases, triggered from the GUI.
+//! Self-update from the GitHub releases: from the GUI ("Update now"), and automatically by
+//! the background service (`spawn_background`), which installs quietly while Deadlock and the
+//! window are closed.
 //!
 //! Only on Windows and Linux; elsewhere [`check`] never finds an update.
 #![cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
@@ -8,7 +10,7 @@ use std::io::Write;
 use std::path::Path;
 
 use serde::Deserialize;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::paths;
 use crate::utils::http_client;
@@ -19,6 +21,12 @@ const USER_AGENT: &str = "deadlock-api-ingest";
 const MAX_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
 /// The shared client's 30 s limit is for API calls; a ~30 MB download needs longer.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(10);
+/// Automatic updates: first look a few minutes after the service starts (not at login, when
+/// the PC is busiest), then every few hours. While Deadlock or the window is open, look again
+/// a little later.
+const AUTO_FIRST_CHECK: Duration = Duration::from_mins(5);
+const AUTO_INTERVAL: Duration = Duration::from_hours(3);
+const AUTO_BUSY_RETRY: Duration = Duration::from_mins(15);
 
 /// The release asset that replaces this build.
 #[cfg(windows)]
@@ -141,7 +149,43 @@ fn download(url: &str, to: &Path) -> Result<(), String> {
 /// Downloads and starts the new version. On success the caller should exit: the new version
 /// takes over (Windows: its installer replaces this exe and reopens the window).
 pub(crate) fn apply(update: &Update) -> Result<(), String> {
-    platform::apply(update)
+    platform::apply(update, false)
+}
+
+/// Starts the automatic updater thread of the background service. It never interrupts a game
+/// or an open window; the installer it starts stops this process and starts the new one.
+pub(crate) fn spawn_background() {
+    if !supported() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("auto-update".into())
+        .spawn(|| {
+            std::thread::sleep(AUTO_FIRST_CHECK);
+            loop {
+                let mut sys = crate::game_process::new_system();
+                if crate::game_process::find_pid(&mut sys).is_some() || crate::service::gui_open() {
+                    std::thread::sleep(AUTO_BUSY_RETRY);
+                    continue;
+                }
+                match check() {
+                    Ok(Some(update)) => {
+                        info!("auto-update: installing version {}", update.version);
+                        match platform::apply(&update, true) {
+                            // The installer is about to stop this process; don't check again.
+                            Ok(()) => std::thread::sleep(AUTO_INTERVAL),
+                            Err(e) => warn!("auto-update: {e}"),
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => warn!("auto-update: {e}"),
+                }
+                std::thread::sleep(AUTO_INTERVAL);
+            }
+        });
+    if let Err(e) = spawned {
+        warn!("auto-update: failed to start: {e}");
+    }
 }
 
 #[cfg(windows)]
@@ -149,13 +193,17 @@ mod platform {
     use super::{ASSET_NAME, Update, download};
     use crate::service::spawn_detached;
 
-    pub(super) fn apply(update: &Update) -> Result<(), String> {
+    pub(super) fn apply(update: &Update, silent: bool) -> Result<(), String> {
         // The installer stops this GUI and the watcher, replaces the installed exe and
-        // reopens the window (see `install`).
+        // reopens the window (see `install`); with --silent it restarts the watcher instead.
         let setup = std::env::temp_dir().join(ASSET_NAME);
         download(&update.download_url, &setup)?;
-        spawn_detached(&setup, &["--install"])
-            .map_err(|e| format!("Cannot start the installer: {e}"))
+        let args: &[&str] = if silent {
+            &["--install", "--silent"]
+        } else {
+            &["--install"]
+        };
+        spawn_detached(&setup, args).map_err(|e| format!("Cannot start the installer: {e}"))
     }
 }
 
@@ -168,7 +216,11 @@ mod platform {
     use std::path::Path;
     use std::process::Command;
 
-    pub(super) fn apply(update: &Update) -> Result<(), String> {
+    pub(super) fn apply(update: &Update, silent: bool) -> Result<(), String> {
+        // Unattended, only under systemd, which restarts the service onto the new binary.
+        if silent && systemctl(&["is-active", "--quiet", APP_NAME]).is_err() {
+            return Err("automatic updates need the systemd user service".to_owned());
+        }
         let exe = paths::current_exe()?;
         // Download next to the exe so the final rename is atomic; a running binary can be
         // replaced this way, it keeps executing the old inode.
@@ -182,6 +234,9 @@ mod platform {
                 format!("Cannot replace {}: {e}", exe.display())
             })?;
 
+        if silent {
+            return systemctl(&["try-restart", APP_NAME]);
+        }
         // Under systemd the unit restarts onto the new binary; otherwise stop the old
         // watcher and the new GUI starts the new one.
         if systemctl(&["try-restart", APP_NAME]).is_err() || !service::is_running() {
@@ -215,7 +270,7 @@ mod platform {
 mod platform {
     use super::Update;
 
-    pub(super) fn apply(_update: &Update) -> Result<(), String> {
+    pub(super) fn apply(_update: &Update, _silent: bool) -> Result<(), String> {
         Err("Updating isn't supported on this platform".to_owned())
     }
 }

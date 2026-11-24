@@ -17,9 +17,15 @@ fn is_setup_name(exe: &Path) -> bool {
         .is_some_and(|s| s.to_ascii_lowercase().contains("-setup"))
 }
 
-pub(crate) fn run_install() -> i32 {
-    match platform::install() {
+/// `silent`: an automatic update. No dialogs, and the background service is restarted
+/// instead of the window being opened.
+pub(crate) fn run_install(silent: bool) -> i32 {
+    match platform::install(silent) {
         Ok(()) => 0,
+        Err(e) if silent => {
+            tracing::error!("Automatic update failed: {e}");
+            1
+        }
         Err(e) => {
             console::message_box(&format!("Installation failed:\n\n{e}"), true);
             1
@@ -107,7 +113,7 @@ mod platform {
         key.set_value("NoRepair", &1u32)
     }
 
-    pub(super) fn install() -> Result<(), String> {
+    pub(super) fn install(silent: bool) -> Result<(), String> {
         let me = paths::current_exe()?;
         let dir = install_dir()?;
         let target = dir.join(format!("{APP_NAME}.exe"));
@@ -140,6 +146,12 @@ mod platform {
             warn!("Cannot register uninstall entry: {e}");
         }
 
+        if silent {
+            // Automatic update: the old watcher was stopped above, start the new one directly.
+            return crate::service::start_watcher(&target).map_err(|e| {
+                format!("Installed, but couldn't restart the background service: {e}")
+            });
+        }
         // The GUI registers autostart and starts the watcher (see `service::ensure_started`).
         spawn_detached(&target, &["--gui"]).map_err(|e| format!("Installed, but {e}"))
     }
@@ -201,7 +213,7 @@ mod platform {
 mod platform {
     const UNSUPPORTED: &str = "The built-in installer is Windows-only; on Linux use install-linux.sh, on macOS install-macos.sh (or just run with --gui, which sets up the background service).";
 
-    pub(super) fn install() -> Result<(), String> {
+    pub(super) fn install(_silent: bool) -> Result<(), String> {
         Err(UNSUPPORTED.to_owned())
     }
 

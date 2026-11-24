@@ -45,6 +45,39 @@ pub(crate) fn ensure_started() -> Result<(), String> {
     platform::ensure_started(&paths::current_exe()?)
 }
 
+/// Starts the watcher from `exe` (an automatic update's freshly installed copy) unless one
+/// is already running. Only the Windows installer uses it.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn start_watcher(exe: &Path) -> Result<(), String> {
+    if is_running() {
+        return Ok(());
+    }
+    platform::ensure_started(exe)
+}
+
+/// Whether a status window (`--gui`) of this app is open. Automatic updates wait for it to
+/// close: the window has its own "Update now", and installing would close it.
+pub(crate) fn gui_open() -> bool {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
+
+    let mut sys = crate::game_process::new_system();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_cmd(UpdateKind::OnlyIfNotSet),
+    );
+    sys.processes().values().any(|process| {
+        let cmd = process.cmd();
+        let is_app = |name: &OsStr| {
+            Path::new(name)
+                .file_stem()
+                .is_some_and(|stem| stem.eq_ignore_ascii_case(APP_NAME))
+        };
+        (is_app(process.name()) || cmd.first().is_some_and(|arg0| is_app(arg0)))
+            && cmd.iter().any(|arg| arg == "--gui")
+    })
+}
+
 /// A command with all stdio detached and, on Windows, no console window.
 pub(crate) fn quiet(program: impl AsRef<OsStr>) -> Command {
     let mut cmd = Command::new(program);

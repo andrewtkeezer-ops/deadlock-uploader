@@ -1,6 +1,6 @@
 [package]
 name = "deadlock-api-ingest"
-version = "0.5.1"
+version = "0.5.2"
 description = "Soul Scribe match uploader (fork of deadlock-api-ingest)"
 repository = "https://github.com/andrewtkeezer-ops/deadlock-uploader"
 license = "MIT"
