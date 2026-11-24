@@ -71,7 +71,7 @@ pub(crate) fn gui_open() -> bool {
         let is_app = |name: &OsStr| {
             Path::new(name)
                 .file_stem()
-                .is_some_and(|stem| stem.eq_ignore_ascii_case(APP_NAME))
+                .is_some_and(|stem| stem.eq_ignore_ascii_case(crate::paths::APP_NAME))
         };
         (is_app(process.name()) || cmd.first().is_some_and(|arg0| is_app(arg0)))
             && cmd.iter().any(|arg| arg == "--gui")
