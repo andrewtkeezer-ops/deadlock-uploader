@@ -152,6 +152,12 @@ pub(crate) fn apply(update: &Update) -> Result<(), String> {
     platform::apply(update, false)
 }
 
+/// Installs `update` without opening the window or showing dialogs: the installer replaces
+/// the installed copy and restarts the background service (Windows; Linux under systemd).
+pub(crate) fn apply_silent(update: &Update) -> Result<(), String> {
+    platform::apply(update, true)
+}
+
 /// Starts the automatic updater thread of the background service. It never interrupts a game
 /// or an open window; the installer it starts stops this process and starts the new one.
 pub(crate) fn spawn_background() {
@@ -171,7 +177,7 @@ pub(crate) fn spawn_background() {
                 match check() {
                     Ok(Some(update)) => {
                         info!("auto-update: installing version {}", update.version);
-                        match platform::apply(&update, true) {
+                        match apply_silent(&update) {
                             // The installer is about to stop this process; don't check again.
                             Ok(()) => std::thread::sleep(AUTO_INTERVAL),
                             Err(e) => warn!("auto-update: {e}"),

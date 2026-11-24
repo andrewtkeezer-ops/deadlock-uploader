@@ -82,6 +82,7 @@ mod service;
 mod squad;
 mod steam_dir;
 mod steam_user;
+mod tray;
 mod update;
 mod utils;
 
@@ -253,8 +254,10 @@ fn main() {
     if !args.no_gc {
         gc::spawn_background();
     }
-    // Squad: the background service keeps itself up to date (see `update::spawn_background`).
+    // Squad: the background service keeps itself up to date (see `update::spawn_background`)
+    // and, on Windows, shows a tray icon to reopen the window or update now.
     update::spawn_background();
+    tray::spawn();
 
     watch_cache_dirs(cache_dirs);
 }

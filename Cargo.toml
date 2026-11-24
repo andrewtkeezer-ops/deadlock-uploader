@@ -1,6 +1,6 @@
 [package]
 name = "deadlock-api-ingest"
-version = "0.5.2"
+version = "0.5.3"
 description = "Soul Scribe match uploader (fork of deadlock-api-ingest)"
 repository = "https://github.com/andrewtkeezer-ops/deadlock-uploader"
 license = "MIT"
@@ -54,6 +54,8 @@ rustix = { version = "1", features = ["process"] }
 winreg = "0.56.0"
 windows-dpapi = "0.2.0"
 mslnk = "0.1.8"
+# Squad: tray icon for the background service (open the window, update now).
+tray-icon = { version = "0.26", default-features = false }
 windows-sys = { version = "0.61", features = [
     "Win32_System_Console",
     "Win32_UI_WindowsAndMessaging",
